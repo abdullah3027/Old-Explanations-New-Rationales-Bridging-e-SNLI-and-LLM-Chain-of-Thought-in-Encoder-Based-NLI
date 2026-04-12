@@ -49,7 +49,7 @@ class VariantCConfig:
     checkpoint_dir: str = "results/variant_c/checkpoints"
 
     # Dataloader
-    dataloader_num_workers: int = 2
+    dataloader_num_workers: int = 0   # 0 = main process only; faster in Colab with on-the-fly tokenization
 
     # Checkpointing
     save_strategy: str = "epoch"
