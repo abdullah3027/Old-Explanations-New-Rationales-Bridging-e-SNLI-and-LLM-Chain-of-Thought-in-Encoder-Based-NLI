@@ -52,10 +52,19 @@ class MultiTaskTrainer(Trainer):
         output_dir = output_dir or self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
         torch.save(self.model.state_dict(), os.path.join(output_dir, "model.pt"))
-        # Also save config for reproducibility
         if hasattr(self, "_variant_c_config"):
             with open(os.path.join(output_dir, "variant_c_config.json"), "w") as f:
                 json.dump(vars(self._variant_c_config), f, indent=2)
+
+    def _load_from_checkpoint(self, resume_from_checkpoint, model=None):
+        """Load model weights from our custom model.pt checkpoint format."""
+        model = model or self.model
+        model_path = os.path.join(resume_from_checkpoint, "model.pt")
+        if not os.path.isfile(model_path):
+            raise ValueError(f"Can't find model.pt in checkpoint at {resume_from_checkpoint}")
+        state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
+        model.load_state_dict(state_dict)
+        print(f"Loaded model weights from {model_path}")
 
 
 def compute_metrics(eval_pred):
