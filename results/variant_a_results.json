@@ -1,0 +1,8 @@
+{
+  "variant": "A",
+  "model": "microsoft/deberta-v3-base",
+  "val_accuracy": 0.8483,
+  "test_accuracy": 0.8369299674267101,
+  "epochs": 3,
+  "train_samples": 100000
+}
