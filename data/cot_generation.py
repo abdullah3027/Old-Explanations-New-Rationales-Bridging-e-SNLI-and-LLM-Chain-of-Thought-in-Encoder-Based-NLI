@@ -1,20 +1,28 @@
-"""CoT trace generation pipeline for Variant D using Ollama (local inference).
+"""CoT trace generation pipeline for Variant D using HuggingFace Inference API.
 
-Generates 10,000 chain-of-thought reasoning traces from e-SNLI training examples,
-stratified across 3 labels (3,334 entailment + 3,333 neutral + 3,333 contradiction).
+Generates ~2,000 chain-of-thought reasoning traces from e-SNLI training examples
+using DeepSeek-R1-Distill-Qwen-7B — the best open-source reasoning model available
+on the HF free tier.
+
+Target: 667 per label × 3 labels = 2,001 traces total (balanced).
+
+Rate limit strategy: HF free tier allows ~500-1000 requests/day. The script
+auto-pauses on 429 responses and resumes. Run it daily until complete (~2 days).
+Checkpoint/resume means no work is ever lost on interruption.
 
 Usage:
-    python data/cot_generation.py                          # generate / resume
-    python data/cot_generation.py --validate-only          # check existing file
-    python data/cot_generation.py --model llama3:latest    # use a different model
-    python data/cot_generation.py --output path/to/out.csv # custom output path
+    python data/cot_generation.py --hf-token hf_xxxx
+    python data/cot_generation.py --hf-token hf_xxxx --validate-only
+    python data/cot_generation.py --hf-token hf_xxxx --output path/to/out.csv
 
-Requires Ollama running locally: https://ollama.com
-Recommended model: gemma3:latest (fastest — 4.3B Q4_K_M)
+Or set HF_TOKEN env variable to avoid passing it every time:
+    export HF_TOKEN=hf_xxxx
+    python data/cot_generation.py
 """
 
 import argparse
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -27,18 +35,17 @@ import requests
 # Constants
 # ---------------------------------------------------------------------------
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
-
-DEFAULT_MODEL  = "gemma3:latest"
+HF_API_URL   = "https://api-inference.huggingface.co/v1/chat/completions"
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 DEFAULT_OUTPUT = "Datasets/CoT/cot_traces.csv"
-N_PER_LABEL    = 3334          # 3334 + 3333 + 3333 = 10,000 total
-RANDOM_SEED    = 42
 
-VALID_LABELS = {"entailment", "neutral", "contradiction"}
+N_PER_LABEL  = 667          # 667 × 3 = 2,001 total (~2K)
+RANDOM_SEED  = 42
 
+VALID_LABELS        = {"entailment", "neutral", "contradiction"}
 LABEL_LEAKAGE_WORDS = {"entailment", "neutral", "contradiction"}
 
-# Describes the relationship without using the label word itself.
+# Describes the relationship without naming the label — prevents MLM leakage.
 LABEL_DESCRIPTIONS = {
     "entailment":    "the hypothesis logically follows from the premise",
     "neutral":       "the hypothesis is neither confirmed nor contradicted by the premise",
@@ -65,41 +72,76 @@ Reasoning:\
 """
 
 # ---------------------------------------------------------------------------
-# Ollama API
+# HuggingFace Inference API
 # ---------------------------------------------------------------------------
 
-def call_ollama(
+def _strip_think_tags(text: str) -> str:
+    """Remove DeepSeek-R1 internal <think>...</think> blocks from output."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def call_hf_inference(
     prompt: str,
+    hf_token: str,
     model: str = DEFAULT_MODEL,
+    max_retries: int = 6,
     timeout: int = 60,
 ) -> Optional[str]:
-    """Call Ollama chat endpoint. Returns generated text or None on failure."""
+    """Call HF Inference API (v1 chat completions). Returns generated text or None.
+
+    Handles:
+      - 429 Too Many Requests  → sleeps for Retry-After (or 60s), retries up to max_retries
+      - 503 Model Loading      → sleeps 30s, retries
+      - other errors           → returns None immediately (logged)
+    """
+    headers = {
+        "Authorization": f"Bearer {hf_token}",
+        "Content-Type": "application/json",
+    }
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 300,
+        "temperature": 0.3,
         "stream": False,
-        "options": {
-            "temperature": 0.3,
-            "num_predict": 200,
-        },
     }
-    try:
-        resp = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
-    except requests.exceptions.ConnectionError:
-        print("\nERROR: Cannot connect to Ollama. Is it running? Start with: ollama serve")
-        sys.exit(1)
-    except requests.exceptions.Timeout:
-        return None
 
-    if resp.status_code != 200:
-        return None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(HF_API_URL, headers=headers, json=payload, timeout=timeout)
+        except requests.exceptions.Timeout:
+            print(f"  [timeout on attempt {attempt + 1}]", flush=True)
+            time.sleep(10)
+            continue
+        except requests.exceptions.RequestException as e:
+            print(f"  [request error: {e}]", flush=True)
+            return None
 
-    try:
-        text = resp.json()["message"]["content"].strip()
-    except (KeyError, ValueError):
-        return None
+        if resp.status_code == 200:
+            try:
+                text = resp.json()["choices"][0]["message"]["content"]
+                text = _strip_think_tags(text).strip()
+                return text if len(text) >= 30 else None
+            except (KeyError, IndexError, ValueError):
+                return None
 
-    return text if len(text) >= 30 else None
+        elif resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 60))
+            print(f"\n  [Rate limit hit — sleeping {retry_after}s before retry {attempt + 1}/{max_retries}]",
+                  flush=True)
+            time.sleep(retry_after)
+
+        elif resp.status_code == 503:
+            print(f"\n  [Model loading (503) — sleeping 30s, attempt {attempt + 1}/{max_retries}]",
+                  flush=True)
+            time.sleep(30)
+
+        else:
+            print(f"\n  [HTTP {resp.status_code}: {resp.text[:120]}]", flush=True)
+            return None
+
+    print(f"\n  [Max retries ({max_retries}) reached — skipping example]", flush=True)
+    return None
 
 
 def _build_prompt(premise: str, hypothesis: str, label: str) -> str:
@@ -127,7 +169,11 @@ def _load_esnli_train(project_root: Path) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def select_subset(esnli_df: pd.DataFrame, n_per_label: int = N_PER_LABEL, seed: int = RANDOM_SEED) -> pd.DataFrame:
+def select_subset(
+    esnli_df: pd.DataFrame,
+    n_per_label: int = N_PER_LABEL,
+    seed: int = RANDOM_SEED,
+) -> pd.DataFrame:
     """Stratified sample: n_per_label rows per label, perfectly balanced."""
     subset = (
         esnli_df
@@ -146,28 +192,38 @@ def select_subset(esnli_df: pd.DataFrame, n_per_label: int = N_PER_LABEL, seed: 
 def generate_cot_traces(
     source_df: pd.DataFrame,
     output_path: str,
+    hf_token: str,
     model: str = DEFAULT_MODEL,
-    sleep_between: float = 0.1,
+    sleep_between: float = 1.5,
 ) -> None:
-    """Generate CoT traces for source_df, writing results to output_path.
+    """Generate CoT traces, appending one row per call for safe checkpoint/resume.
 
-    Checkpoint/resume: appends one row per successful generation.
-    Re-running picks up exactly where it left off.
+    Checkpoint/resume: re-running the script automatically skips completed rows.
+    Rate-limited days: run the script daily — it picks up where it left off.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Determine which pair_ids are already done
+    # Determine already-completed pair_ids
     done_ids: Set[int] = set()
     if output_path.exists():
-        existing = pd.read_csv(output_path, usecols=["pair_id", "cot_rationale"], dtype={"pair_id": int})
-        done_ids = set(
-            existing.loc[existing["cot_rationale"].notna() & (existing["cot_rationale"].str.strip() != ""), "pair_id"]
+        existing = pd.read_csv(
+            output_path,
+            usecols=["pair_id", "cot_rationale"],
+            dtype={"pair_id": int},
         )
-        print(f"Resuming — {len(done_ids):,} already done, {len(source_df) - len(done_ids):,} remaining.")
+        done_ids = set(
+            existing.loc[
+                existing["cot_rationale"].notna() &
+                (existing["cot_rationale"].str.strip() != ""),
+                "pair_id",
+            ]
+        )
+        print(f"Resuming — {len(done_ids):,} already done, "
+              f"{len(source_df) - len(done_ids):,} remaining.")
 
     remaining = source_df[~source_df["pair_id"].isin(done_ids)].reset_index(drop=True)
-    total = len(source_df)
+    total      = len(source_df)
     done_count = len(done_ids)
 
     if remaining.empty:
@@ -175,11 +231,11 @@ def generate_cot_traces(
         return
 
     file_exists = output_path.exists()
-    start_time = time.time()
+    start_time  = time.time()
 
     for i, row in enumerate(remaining.itertuples(index=False)):
         prompt = _build_prompt(row.Sentence1, row.Sentence2, row.gold_label)
-        cot = call_ollama(prompt, model=model)
+        cot    = call_hf_inference(prompt, hf_token=hf_token, model=model)
 
         record = {
             "pair_id":       row.pair_id,
@@ -191,24 +247,29 @@ def generate_cot_traces(
             "cot_model":     model,
         }
 
+        # Append immediately — one row = one durable checkpoint
         pd.DataFrame([record]).to_csv(
             output_path, mode="a", header=not file_exists, index=False
         )
         file_exists = True
         done_count += 1
 
-        if (i + 1) % 100 == 0:
+        if (i + 1) % 50 == 0:
             elapsed = (time.time() - start_time) / 60
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
-            remaining_count = total - done_count
-            eta = remaining_count / rate if rate > 0 else float("inf")
-            print(f"[{done_count:,}/{total:,}] elapsed={elapsed:.1f}min | rate={rate:.1f} ex/min | ETA=~{eta:.0f}min")
+            rate    = (i + 1) / elapsed if elapsed > 0 else 0
+            eta     = (total - done_count) / rate if rate > 0 else float("inf")
+            print(
+                f"[{done_count:,}/{total:,}] "
+                f"elapsed={elapsed:.1f}min | "
+                f"rate={rate:.1f} ex/min | "
+                f"ETA=~{eta:.0f}min",
+                flush=True,
+            )
 
-        if sleep_between > 0:
-            time.sleep(sleep_between)
+        time.sleep(sleep_between)
 
     elapsed_total = (time.time() - start_time) / 60
-    print(f"\nDone. Generated {done_count:,} traces in {elapsed_total:.1f} min.")
+    print(f"\nDone. {done_count:,} traces in {elapsed_total:.1f} min.")
     print(f"Output: {output_path}")
 
 
@@ -223,31 +284,30 @@ def validate_traces(path: str) -> None:
         print(f"File not found: {path}")
         return
 
-    df = pd.read_csv(path, dtype={"pair_id": int})
-    total = len(df)
+    df        = pd.read_csv(path, dtype={"pair_id": int})
+    total     = len(df)
     non_empty = df["cot_rationale"].notna() & (df["cot_rationale"].str.strip() != "")
-    filled = non_empty.sum()
+    filled    = non_empty.sum()
 
     leakage = df.loc[non_empty, "cot_rationale"].str.lower().apply(
         lambda t: any(w in t for w in LABEL_LEAKAGE_WORDS)
     ).sum()
 
     word_counts = df.loc[non_empty, "cot_rationale"].str.split().apply(len)
+    label_dist  = df["gold_label"].value_counts().sort_index()
 
-    label_dist = df["gold_label"].value_counts().sort_index()
-
-    print("=" * 45)
-    print("CoT Trace Validation")
-    print("=" * 45)
-    print(f"Total rows:            {total:>7,}")
-    print(f"Non-empty rationale:   {filled:>7,}  ({filled/total*100:.1f}%)")
-    print(f"Label word leakage:    {leakage:>7,}  ({leakage/filled*100:.1f}%)  ← target: <5%")
-    print(f"Avg word count:        {word_counts.mean():>7.1f}")
-    print(f"Min / Max word count:  {word_counts.min():>7} / {word_counts.max()}")
-    print("Label distribution:")
+    print("=" * 47)
+    print("  CoT Trace Validation Report")
+    print("=" * 47)
+    print(f"  Total rows:            {total:>6,}")
+    print(f"  Non-empty rationale:   {filled:>6,}  ({filled / total * 100:.1f}%)")
+    print(f"  Label word leakage:    {leakage:>6,}  ({leakage / max(filled, 1) * 100:.1f}%)  ← target <5%")
+    print(f"  Avg word count:        {word_counts.mean():>6.1f}")
+    print(f"  Min / Max words:       {word_counts.min():>3} / {word_counts.max()}")
+    print("  Label distribution:")
     for label, count in label_dist.items():
-        print(f"  {label:<15} {count:>6,}  ({count/total*100:.1f}%)")
-    print("=" * 45)
+        print(f"    {label:<15} {count:>5,}  ({count / total * 100:.1f}%)")
+    print("=" * 47)
 
 
 # ---------------------------------------------------------------------------
@@ -255,23 +315,39 @@ def validate_traces(path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate CoT traces for Variant D using Ollama.")
-    parser.add_argument("--model",         default=DEFAULT_MODEL,  help="Ollama model name")
+    parser = argparse.ArgumentParser(
+        description="Generate 2K CoT traces for Variant D via HF Inference API."
+    )
+    parser.add_argument(
+        "--hf-token",
+        default=os.environ.get("HF_TOKEN", ""),
+        help="HuggingFace API token (or set HF_TOKEN env var)",
+    )
+    parser.add_argument("--model",         default=DEFAULT_MODEL,  help="HF model ID")
     parser.add_argument("--output",        default=DEFAULT_OUTPUT, help="Output CSV path")
-    parser.add_argument("--n-per-label",   type=int, default=N_PER_LABEL, help="Examples per label (default 3334 → 10K total)")
-    parser.add_argument("--validate-only", action="store_true",    help="Only validate existing file, no generation")
+    parser.add_argument("--n-per-label",   type=int, default=N_PER_LABEL,
+                        help="Examples per label (default 667 → ~2K total)")
+    parser.add_argument("--validate-only", action="store_true",
+                        help="Only validate existing file, skip generation")
     args = parser.parse_args()
 
     if args.validate_only:
         validate_traces(args.output)
         return
 
-    # Locate project root (two levels up from this file)
+    if not args.hf_token:
+        print("ERROR: HuggingFace token required.")
+        print("  Pass --hf-token hf_xxxx  OR  set HF_TOKEN environment variable.")
+        print("  Get your token at: https://huggingface.co/settings/tokens")
+        sys.exit(1)
+
     project_root = Path(__file__).resolve().parent.parent
 
-    print(f"Model:        {args.model}")
-    print(f"Output:       {args.output}")
-    print(f"Target:       {args.n_per_label * 3:,} traces ({args.n_per_label} per label)")
+    print(f"Model:   {args.model}")
+    print(f"Output:  {args.output}")
+    print(f"Target:  {args.n_per_label * 3:,} traces ({args.n_per_label} per label)")
+    print(f"Note:    HF free tier = ~500-1000 req/day → may take 2-3 days total.")
+    print(f"         Re-run this script daily — checkpoint/resume handles the rest.")
     print()
 
     print("Loading e-SNLI training data...")
@@ -280,13 +356,14 @@ def main() -> None:
 
     print("Selecting stratified subset...")
     subset = select_subset(esnli_df, n_per_label=args.n_per_label)
-    print(f"  Subset size: {len(subset):,}")
-    print(f"  Label counts:\n{subset['gold_label'].value_counts().to_string()}")
+    print(f"  Subset: {len(subset):,} examples")
+    print(f"  Labels:\n{subset['gold_label'].value_counts().to_string()}")
     print()
 
     generate_cot_traces(
         source_df=subset,
         output_path=args.output,
+        hf_token=args.hf_token,
         model=args.model,
     )
 
