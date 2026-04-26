@@ -1,8 +1,14 @@
 {
   "variant": "A",
   "model": "microsoft/deberta-v3-base",
-  "val_accuracy": 0.8483,
-  "test_accuracy": 0.8369299674267101,
+  "val_accuracy": 0.8414,
+  "test_accuracy": 0.8336,
   "epochs": 3,
-  "train_samples": 100000
+  "train_samples": 100000,
+  "SNLI Test": 0.8336,
+  "MultiNLI Matched": 0.5845,
+  "MultiNLI Mismatched": 0.6108,
+  "ANLI R1": 0.31,
+  "ANLI R2": 0.315,
+  "ANLI R3": 0.32
 }
