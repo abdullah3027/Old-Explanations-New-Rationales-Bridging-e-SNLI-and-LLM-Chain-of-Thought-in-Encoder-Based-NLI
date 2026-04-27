@@ -1,48 +1,92 @@
-\documentclass[conference]{IEEEtran}
-%\IEEEoverridecommandlockouts
-% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
-\usepackage{cite}
+\documentclass[acmlarge, nonacm]{acmart}
+
+% Suppress ACM copyright and permission block
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\pagestyle{plain}
+
+% Packages
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithm,algpseudocode}
 \usepackage{float}
 \usepackage{graphicx}
 \usepackage{textcomp}
 \usepackage{xcolor}
-\usepackage{pgfgantt}
-\usepackage{enumitem}
+\usepackage{booktabs}
 \usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{pgfgantt}
+\usepackage{verbatim}
+
 \setlist[itemize]{itemsep=0.3em, topsep=0.3em}
-\usepackage{algorithm}
-\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
-    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 
+%------------------------------------------------------------------
+% Title and Authors
+%------------------------------------------------------------------
+\title{Does Learning to Explain Improve Natural Language Inference?
+Comparing Reasoning Integration Architectures in Transformer Encoders}
+
+\subtitle{Human Centered Natural Language Processing --- Group 3}
+
+\author{Arshad Kainat}
+\affiliation{
+  \institution{Otto-von-Guericke University}
+  \city{Magdeburg}
+  \country{Germany}
+}
+
+\author{Muhammad Abdhullah}
+\affiliation{
+  \institution{Otto-von-Guericke University}
+  \city{Magdeburg}
+  \country{Germany}
+}
+
+\author{Thonda Aishwarya}
+\email{aishwarya.thonda@st.ovgu.de}
+\affiliation{
+  \institution{Otto-von-Guericke University}
+  \city{Magdeburg}
+  \country{Germany}
+}
+
+%------------------------------------------------------------------
 \begin{document}
-
-\title{Does Learning to Explain Improve Natural Language Inference? Comparing Reasoning Integration Architectures in Transformer Encoders\\
-{\small\textbf{Human Centered Natural Language Processing, Group 3}}\\
-% {\footnotesize Human Centered Natural Language Processing, Group E}
-}
-
-\author{
-\IEEEauthorblockN{
-Arshad Kainat\textsuperscript{1},
-Muhammad Abdhullah\textsuperscript{2},
-Thonda Aishwarya\textsuperscript{3}
-}
-\IEEEauthorblockA{
-Faculty of Computer Science, Otto-von-Guericke University\\
-Magdeburg, Germany\\
-
-Email: aishwarya.thonda@st.ovgu.de,\\
-}
-}
-
-
+%------------------------------------------------------------------
 
 \maketitle
-\thispagestyle{plain}
-\pagestyle{plain}
 
-%__________________________________________________________________
+%------------------------------------------------------------------
+% Main Content — all subparts
+%------------------------------------------------------------------
+
+\input{Sub-Parts/1_Abstarct_Introduction}
+
+\input{Sub-Parts/2_Prior_Work}
+
+\input{Sub-Parts/3_Model_A}
+
+\input{Sub-Parts/4_Model_B}
+
+\input{Sub-Parts/5_Model_C}
+
+\input{Sub-Parts/6_Model_D}
+
+\input{Sub-Parts/7_Dataset_ExperimentalSettings}
+
+\input{Sub-Parts/9_Experiments}
+
+\input{Sub-Parts/10.1_Results}
+
+\input{Sub-Parts/10.2_Results}
+
+\input{Sub-Parts/10.3_Results}
+
+%------------------------------------------------------------------
+% Bibliography
+%------------------------------------------------------------------
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
 
 \end{document}

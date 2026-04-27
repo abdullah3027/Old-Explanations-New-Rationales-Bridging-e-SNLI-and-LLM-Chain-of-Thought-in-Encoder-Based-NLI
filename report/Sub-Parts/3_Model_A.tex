@@ -1,0 +1,415 @@
+
+
+% ACM Large 1-Column Format
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\pagestyle{plain}
+
+%------------------------------------------------------------------
+\section{Variant A - Classification Only Baseline}
+%------------------------------------------------------------------
+
+\subsection{The Core Idea}
+
+Imagine you are learning to judge whether two statements agree with
+each other, contradict each other, or are simply unrelated. Your
+teacher hands you thousands of examples and asks you to answer after
+reading each one:
+
+\begin{quote}
+\textit{Statement 1: ``A dog is running in the park.''} \\
+\textit{Statement 2: ``An animal is outside.''} \\
+\textit{Answer: They agree.}
+\end{quote}
+
+There is no explanation given. No reasoning. Just the two statements
+and the correct label. You are expected to figure out the pattern on
+your own.
+
+This is exactly what Variant A does. It is the most direct possible
+approach to Natural Language Inference: read the premise, read the
+hypothesis, predict the label. Nothing more. The model receives no
+guidance about \textit{why} a label is correct. It must discover the
+relationship between the two sentences entirely from the training
+signal --- the feedback it receives when its prediction is right or
+wrong.
+
+This simplicity is precisely what makes Variant A valuable. It is not
+trying to be clever. It is trying to establish an honest, reproducible
+answer to a foundational question: \textit{how well can a strong
+pretrained encoder solve NLI when given nothing but the raw input?}
+Every other variant in this project --- B, C, and D --- adds some form
+of reasoning or explanation to the training process. Variant A tells us
+what we get without any of that. It is the ground truth against which
+all improvements must be measured.
+
+%------------------------------------------------------------------
+\subsection{Why This Is Harder Than It Looks}
+%------------------------------------------------------------------
+
+At first glance, NLI might seem like a simple classification problem.
+You have two sentences and three possible labels. But the task is
+deceptively difficult. Consider the following pair:
+
+\begin{quote}
+\textit{Premise: ``The lawyer argued that the contract was invalid.''} \\
+\textit{Hypothesis: ``Someone made a legal claim.''} \\
+\textit{Label: Entailment}
+\end{quote}
+
+To get this right, the model must understand that a lawyer is a legal
+professional, that arguing in a legal context constitutes making a
+claim, and that the act of arguing about a contract falls within the
+domain of legal activity. None of this is explicit in the text. It
+requires world knowledge, semantic inference, and category reasoning.
+
+A model that merely memorizes surface patterns --- that ``lawyer'' and
+``legal'' tend to appear together, or that certain sentence structures
+imply entailment --- will perform well on examples that resemble its
+training data but fail badly the moment it encounters phrasing it has
+not seen before. This is the fundamental weakness of
+classification-only approaches, and it is what Variant A's
+cross-domain evaluation is designed to reveal.
+
+%------------------------------------------------------------------
+\subsection{Model Architecture}
+%------------------------------------------------------------------
+
+Variant A uses \texttt{microsoft/deberta-v3-base} as its backbone, a
+184-million parameter transformer encoder developed by Microsoft.
+DeBERTa (Decoding-enhanced BERT with Disentangled Attention) improves
+upon BERT and RoBERTa through two key innovations.
+
+First, it uses disentangled attention, where each token is represented
+by two separate vectors --- one for its content and one for its
+position --- and attention weights are computed using all four
+combinations of content and position interactions. This allows the
+model to capture relative positional relationships more precisely than
+standard attention mechanisms.
+
+Second, it uses an enhanced mask decoder during pre-training that
+reintroduces absolute position information at the output layer, helping
+the model distinguish tokens that have identical local context but
+different positions in the sentence.
+
+On top of the DeBERTa backbone, a standard sequence classification head
+is added: a dropout layer followed by a linear projection from the
+hidden dimension (768 for the base model) to 3 output logits, one for
+each NLI label. During training, the \texttt{[CLS]} token's
+representation --- which aggregates information from the entire input
+sequence through the attention mechanism --- is passed through this
+head to produce the final prediction.
+
+%------------------------------------------------------------------
+\subsection{Input Format}
+%------------------------------------------------------------------
+
+The input to Variant A is straightforward. The premise and hypothesis
+are concatenated and passed to the tokenizer, which produces the
+following token sequence:
+
+\begin{center}
+\texttt{[CLS] premise [SEP] hypothesis [SEP] [PAD] \ldots}
+\end{center}
+
+No explanation is included. This is the defining characteristic of
+Variant A and the key contrast with Variants B, C, and D. The model
+sees only the two sentences it must reason about, with no additional
+context about why their relationship holds.
+
+The maximum sequence length is set to 256 tokens. For Variant A this
+is sufficient because premise and hypothesis together rarely exceed
+50--70 tokens in e-SNLI. Choosing 256 rather than the 384 used in
+Variants B, C, and D reduces memory usage and speeds up training
+without any information loss, since no third text segment (the
+explanation) needs to be accommodated.
+
+%------------------------------------------------------------------
+\subsection{Training Configuration}
+%------------------------------------------------------------------
+
+All hyperparameters follow the shared configuration defined in
+\texttt{config.py} to ensure that performance differences between
+variants can be attributed to architectural choices rather than
+training differences.
+
+\subsubsection{Label Mapping}
+
+The label mapping is fixed across all variants:
+
+\begin{verbatim}
+label2id = {"entailment": 0,
+            "neutral": 1,
+            "contradiction": 2}
+id2label = {0: "entailment",
+            1: "neutral",
+            2: "contradiction"}
+\end{verbatim}
+
+This exact ordering must be consistent across all variants. If Variant
+A maps entailment to 0 but Variant B maps it to 2, the resulting
+logits are incomparable and the evaluation numbers become meaningless.
+
+\subsubsection{Sequence Length}
+
+\begin{verbatim}
+max_seq_length: int = 256
+\end{verbatim}
+
+Variant A uses 256 rather than the 384 used in Variants B, C, and D.
+Since Variant A's input contains only the premise and hypothesis --- no
+explanation --- sequences rarely approach even 100 tokens. Using 384
+would waste memory and compute without any benefit.
+
+\subsubsection{Training Hyperparameters}
+
+\begin{verbatim}
+learning_rate:    2e-5
+num_train_epochs: 3
+weight_decay:     0.01
+warmup_steps:     3090
+fp16:             True
+\end{verbatim}
+
+The learning rate of \texttt{2e-5} is the standard for fine-tuning
+large pretrained transformers, established in the original BERT paper
+and validated across hundreds of subsequent works. Too high (e.g.,
+\texttt{1e-4}) destroys the pretrained representations through
+catastrophic forgetting. Too low (e.g., \texttt{1e-6}) makes learning
+impractically slow within three epochs.
+
+Weight decay of \texttt{0.01} applies L2 regularization to the model
+weights, penalising very large parameter values and acting as a soft
+regulariser against overfitting. This is the standard value used with
+the AdamW optimiser.
+
+The warmup schedule linearly increases the learning rate from near-zero
+to its full value over the first 3,090 steps --- approximately 6\% of
+total training steps across 3 epochs with effective batch size 32. At
+the very start of training, the randomly initialised classification
+head produces highly noisy gradients. Without warmup, these noisy
+updates at full learning rate would permanently damage the carefully
+pretrained DeBERTa backbone weights before the head has had a chance to
+stabilise.
+
+FP16 (half-precision floating point) halves the memory footprint of all
+stored tensors by switching from 32-bit to 16-bit floats. This is what
+makes it feasible to train DeBERTa-v3-base at all on a T4 GPU with
+16GB of VRAM.
+
+\subsubsection{Batch Size and Gradient Accumulation}
+
+\begin{verbatim}
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 4
+effective_batch_size:        32
+\end{verbatim}
+
+The effective batch size of 32 is achieved by accumulating gradients
+over 4 mini-batches of 8 examples each before performing an optimiser
+step. This is a standard technique for simulating a larger batch size
+when GPU memory is insufficient to hold 32 examples simultaneously. All
+variants use this same effective batch size to ensure training dynamics
+are comparable.
+
+%------------------------------------------------------------------
+\subsection{Data Preprocessing}
+%------------------------------------------------------------------
+
+The e-SNLI training data is loaded from CSV files containing premise,
+hypothesis, label, and up to three human-written explanations per
+example. For Variant A, the explanation columns are ignored entirely
+--- only the premise, hypothesis, and label are used.
+
+Labels in the raw data are stored as integers (0, 1, 2). These are
+mapped to their string equivalents (entailment, neutral, contradiction)
+to match the label2id dictionary, and any rows with missing premise,
+hypothesis, or label values are dropped. The training set is then
+subsampled to exactly 100,000 examples using \texttt{random\_state=42}:
+
+\begin{verbatim}
+train_df = train_df.sample(
+    n=100_000,
+    random_state=42
+)
+\end{verbatim}
+
+The fixed random seed is critical. Every variant must train on the
+exact same 100K subset. If different variants train on different
+subsets, any performance difference could reflect data variation rather
+than architectural design, making the comparison invalid.
+
+The final dataset sizes are shown in Table~\ref{tab:dataset_splits}.
+
+\begin{table}[H]
+\centering
+\caption{Dataset splits used for Variant A training and evaluation.}
+\label{tab:dataset_splits}
+\begin{tabular}{lc}
+\toprule
+\textbf{Split} & \textbf{Examples} \\
+\midrule
+Training (subsampled) & 100,000 \\
+Validation            & 9,842   \\
+Test                  & 9,824   \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Label distribution in the training subset is approximately balanced:
+33,523 entailment, 33,330 neutral, and 33,147 contradiction examples.
+
+%------------------------------------------------------------------
+\subsection{Training Procedure}
+%------------------------------------------------------------------
+
+Training follows a standard fine-tuning procedure using the
+HuggingFace \texttt{Trainer} API. For each batch of 8 examples, the
+tokenized premise-hypothesis pairs are passed through the DeBERTa
+backbone. The \texttt{[CLS]} token representation from the final hidden
+layer is projected through the classification head to produce 3 logits.
+Cross-entropy loss is computed against the gold labels and
+backpropagated through both the classification head and the backbone.
+After every 4 mini-batches, the AdamW optimiser updates the model
+weights.
+
+At the end of each epoch, the model is evaluated on the validation set.
+The checkpoint with the highest validation accuracy across all epochs is
+retained as the best model, and this is the checkpoint used for final
+test evaluation.
+
+\begin{verbatim}
+save_strategy          = "epoch"
+save_total_limit       = 3
+load_best_model_at_end = True
+metric_for_best_model  = "accuracy"
+\end{verbatim}
+
+%------------------------------------------------------------------
+\subsection{Training Results}
+%------------------------------------------------------------------
+
+Training was conducted on a Kaggle notebook with a T4 x2 GPU
+configuration. Total wall time was approximately 3 hours and 20 minutes
+across 3 epochs. Table~\ref{tab:training_results} summarises the loss
+and accuracy at each epoch.
+
+\begin{table}[H]
+\centering
+\caption{Training and validation metrics per epoch for Variant A.}
+\label{tab:training_results}
+\begin{tabular}{cccc}
+\toprule
+\textbf{Epoch} & \textbf{Train Loss} & \textbf{Val Loss} & \textbf{Val Acc} \\
+\midrule
+1 & 5.862 & 1.238 & 75.05\% \\
+2 & 4.429 & 0.995 & 80.76\% \\
+3 & 3.776 & 0.850 & \textbf{84.14\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both training and validation loss decreased consistently across all
+three epochs. No overfitting was observed --- the validation loss
+tracked the training loss throughout, suggesting the model was still
+in an underfitting regime at epoch 3. Additional epochs would likely
+yield further improvement, though compute constraints limited training
+to three passes.
+
+%------------------------------------------------------------------
+\subsection{Evaluation Results}
+%------------------------------------------------------------------
+
+Following the evaluation protocol in \texttt{evaluate.py}, Variant A
+was assessed on seven benchmarks spanning three categories. Results are
+presented in Table~\ref{tab:eval_results}.
+
+\begin{table}[H]
+\centering
+\caption{Variant A evaluation results across all benchmarks.}
+\label{tab:eval_results}
+\begin{tabular}{llc}
+\toprule
+\textbf{Benchmark}   & \textbf{Type}   & \textbf{Accuracy} \\
+\midrule
+e-SNLI Test          & In-domain       & 83.36\% \\
+SNLI Test            & Cross-domain    & 83.36\% \\
+MultiNLI Matched     & Cross-domain    & 58.45\% \\
+MultiNLI Mismatched  & Cross-domain    & 61.08\% \\
+ANLI R1              & Adversarial     & 31.00\% \\
+ANLI R2              & Adversarial     & 31.50\% \\
+ANLI R3              & Adversarial     & 32.00\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{In-domain Performance}
+
+The 83.36\% test accuracy on e-SNLI is consistent with published
+benchmarks for DeBERTa-v3-base on SNLI under similar data and compute
+constraints. The gap between this and the state of the art
+($\sim$91--92\%) is primarily attributable to the 100K subsampling ---
+training on the full 550K examples would push accuracy significantly
+higher. This subsampling is intentional and applied uniformly across
+all variants to enable fair architectural comparison.
+
+SNLI test accuracy matches e-SNLI test accuracy exactly at 83.36\%,
+which is expected: both datasets were collected using the same
+annotation methodology (Amazon Mechanical Turk workers writing
+hypotheses for image captions), so they share the same vocabulary,
+sentence structure, and label distribution.
+
+\subsubsection{Cross-domain Generalization}
+
+Performance drops substantially on MultiNLI: 58.45\% on the matched
+set and 61.08\% on the mismatched set. This is a drop of roughly
+22--25 percentage points from in-domain performance. MultiNLI spans
+ten distinct genres of written and spoken English --- government
+reports, telephone conversations, fiction, travel guides, and others
+--- that are entirely absent from e-SNLI's image caption domain. The
+model has learned to recognise entailment relationships in the specific
+vocabulary and sentence patterns of image descriptions. When those
+patterns disappear, so does much of its performance.
+
+This cross-domain degradation is not a failure --- it is the
+diagnostic that Variant A is designed to produce. It quantifies
+precisely how much the model is relying on domain-specific shortcuts
+rather than genuine linguistic reasoning.
+
+\subsubsection{Adversarial Robustness}
+
+The ANLI scores tell an even starker story. At 31.00\%, 31.50\%, and
+32.00\% across rounds R1, R2, and R3 respectively, Variant A performs
+at approximately random chance (33.3\% for a three-class problem). ANLI
+was constructed through an adversarial human-in-the-loop process: human
+annotators were specifically tasked with writing examples that would
+fool a strong NLI model.
+
+The fact that Variant A achieves near-random performance on ANLI is not
+a failure of training --- it is a confirmation that the model has
+learned exactly what we expected: surface patterns. When those patterns
+are deliberately subverted, the model has nothing to fall back on. This
+result is the strongest possible motivation for the
+explanation-augmented approaches in Variants B, C, and D.
+
+%------------------------------------------------------------------
+\subsection{Role in the Project}
+%------------------------------------------------------------------
+
+Variant A establishes two things for the rest of the project. First,
+it provides the numerical baseline: 83.36\% on e-SNLI test, 58--61\%
+on MultiNLI, and $\sim$31--32\% on ANLI. Every other variant must be
+evaluated against these numbers. An improvement on e-SNLI test
+demonstrates that reasoning supervision helps in-domain. An improvement
+on MultiNLI demonstrates better generalization. An improvement on ANLI
+demonstrates genuine reasoning rather than pattern memorization.
+
+Second, Variant A defines the lower bound for what is achievable
+without reasoning. If any of the explanation-enhanced variants fail to
+outperform Variant A on out-of-domain or adversarial benchmarks, that
+would be a meaningful negative finding --- it would suggest that the
+form of reasoning supervision used is not transferring to harder
+evaluation conditions. The value of Variant A is not in its accuracy.
+It is in what the accuracy reveals.
+
+\end{document}
