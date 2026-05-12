@@ -1,0 +1,17 @@
+{
+  "esnli_test_gold": 0.9789291530944625,
+  "esnli_test_tfidf": 0.45734934853420195,
+  "snli_test_tfidf": 0.4574511400651466,
+  "multinli_matched_tfidf": 0.36372898624554256,
+  "multinli_mismatched_tfidf": 0.35882831570382423,
+  "anli_r1_tfidf": 0.313,
+  "anli_r2_tfidf": 0.356,
+  "anli_r3_tfidf": 0.32083333333333336,
+  "esnli_test_t5": 0.7153908794788274,
+  "snli_test_t5": 0.7148819218241043,
+  "multinli_matched_t5": 0.46581762608252675,
+  "multinli_mismatched_t5": 0.4707078925956062,
+  "anli_r1_t5": 0.319,
+  "anli_r2_t5": 0.328,
+  "anli_r3_t5": 0.32666666666666666
+}

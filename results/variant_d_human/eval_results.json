@@ -1,0 +1,11 @@
+{
+  "esnli_test": 0.3357084690553746,
+  "sub_config": "human",
+  "blend_ratio": 0.5,
+  "snli_test": 0.3357084690553746,
+  "multinli_matched": 0.3238920020376974,
+  "multinli_mismatched": 0.3271969080553295,
+  "anli_r1": 0.337,
+  "anli_r2": 0.319,
+  "anli_r3": 0.33166666666666667
+}

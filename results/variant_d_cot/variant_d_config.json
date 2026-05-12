@@ -1,0 +1,40 @@
+{
+  "model_name": "microsoft/deberta-v3-base",
+  "num_labels": 3,
+  "max_seq_length": 384,
+  "learning_rate": 2e-05,
+  "per_device_train_batch_size": 8,
+  "per_device_eval_batch_size": 32,
+  "gradient_accumulation_steps": 4,
+  "num_train_epochs": 3,
+  "weight_decay": 0.01,
+  "warmup_steps": 4,
+  "fp16": true,
+  "alpha": 0.7,
+  "mlm_probability": 0.15,
+  "sub_config": "cot",
+  "rationale_col_human": "Explanation_1",
+  "rationale_col_cot": "cot_rationale_esnli_style",
+  "blend_ratio": 0.5,
+  "blend_seed": 42,
+  "label2id": {
+    "entailment": 0,
+    "neutral": 1,
+    "contradiction": 2
+  },
+  "id2label": {
+    "0": "entailment",
+    "1": "neutral",
+    "2": "contradiction"
+  },
+  "project_root": "",
+  "cot_traces_csv": "Datasets/CoT/cot_traces.csv",
+  "esnli_test": "Datasets/E-SNLI/esnli_test.csv",
+  "dev_frac": 0.1,
+  "split_seed": 42,
+  "dataloader_num_workers": 0,
+  "save_strategy": "epoch",
+  "save_total_limit": 3,
+  "load_best_model_at_end": true,
+  "metric_for_best_model": "accuracy"
+}

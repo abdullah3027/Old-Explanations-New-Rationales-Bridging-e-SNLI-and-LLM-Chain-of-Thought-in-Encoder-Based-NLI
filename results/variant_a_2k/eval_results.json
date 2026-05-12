@@ -1,0 +1,11 @@
+{
+  "variant": "A_2k",
+  "train_samples": 688,
+  "esnli_test": 0.45052931596091206,
+  "snli_test": 0.45052931596091206,
+  "multinli_matched": 0.3892002037697402,
+  "multinli_mismatched": 0.3941212367778682,
+  "anli_r1": 0.3,
+  "anli_r2": 0.318,
+  "anli_r3": 0.3225
+}

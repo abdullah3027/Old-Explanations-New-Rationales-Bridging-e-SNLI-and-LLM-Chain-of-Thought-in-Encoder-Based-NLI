@@ -1,0 +1,11 @@
+{
+  "esnli_test": 0.36838355048859933,
+  "sub_config": "cot",
+  "blend_ratio": 0.5,
+  "snli_test": 0.36807817589576547,
+  "multinli_matched": 0.36372898624554256,
+  "multinli_mismatched": 0.37225386493083806,
+  "anli_r1": 0.28,
+  "anli_r2": 0.314,
+  "anli_r3": 0.3225
+}
